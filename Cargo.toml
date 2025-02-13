@@ -1,6 +1,18 @@
 [package]
-name = "struct_constructor"
+name = "partial_struct"
 version = "0.1.0"
 edition = "2021"
+authors = ["Esteban <estebanmff@outlook.com>"]
+license = "MIT OR Apache-2.0"
+description = "A proc-macro crate that generates partial versions of Rust structs. Specify omitted fields and custom derives via attributes, then use the generated conversion method to build the full struct."
+keywords = ["struct", "partial", "estructure"]
+
+
+[lib]
+proc-macro = true
 
 [dependencies]
+heck = "0.5.0"
+proc-macro2 = "1.0.93"
+quote = "1.0.38"
+syn = { version = "2.0.98", features = ["full"] }
