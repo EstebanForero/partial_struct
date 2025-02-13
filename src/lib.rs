@@ -1,3 +1,4 @@
+use heck::ToSnakeCase;
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
@@ -12,12 +13,46 @@ use syn::{
 /// - An optional target name literal, e.g. `"UserConstructor"`. If omitted, the generated
 ///   struct will be named `"Partial<OriginalStructName>"`.
 /// - An optional `derive(...)` clause listing trait identifiers to derive on the generated struct.
-/// - An optional `omit(...)` clause listing the names of fields (as idents) to omit from the generated struct.
+/// - An optional `omit(...)` clause listing the names of fields to omit from the generated struct.
 ///
-/// # Example
+/// # Examples
+///
+/// Basic usage with omitted fields and extra derives:
 ///
 /// ```ignore
+/// #[derive(Partial)]
 /// #[partial("UserConstructor", derive(Debug, Clone), omit(id, secret))]
+/// pub struct User {
+///     id: uuid::Uuid,
+///     name: String,
+///     secret: String,
+/// }
+///
+/// // Generated code:
+/// // #[derive(Debug, Clone)]
+/// // pub struct UserConstructor {
+/// //     pub name: String,
+/// // }
+/// //
+/// // impl UserConstructor {
+/// //     pub fn to_user(self, id: uuid::Uuid, secret: String) -> User {
+/// //         User { name: self.name, id, secret }
+/// //     }
+/// // }
+/// ```
+///
+/// If the target name is omitted, the generated struct name defaults to "Partial<OriginalName>",
+/// and the conversion method will be named `to_<original_struct_snake_case>()`.
+///
+/// ```ignore
+/// #[derive(Partial)]
+/// #[partial(omit(a))]
+/// pub struct Car {
+///     a: u32,
+///     b: String,
+/// }
+///
+/// // Generated struct will be named `PartialCar` and have a method `to_car()`.
 /// ```
 struct PartialArgs {
     target_name: Option<LitStr>,
@@ -80,13 +115,12 @@ impl Parse for PartialArgs {
 ///
 /// The macro generates a new struct (with a name specified via the `#[partial(...)]` attribute or defaulting
 /// to `"Partial<OriginalStructName>"`) that contains all fields from the original struct except those listed
-/// in the `omit(...)` clause. It also implements a method `to_user` that takes the omitted fields as parameters
-/// and reconstructs the original struct.
+/// in the `omit(...)` clause. It also implements a conversion method named `to_<original_struct>()`
+/// (in snake case) that takes the omitted fields as parameters and reconstructs the original struct.
 ///
-/// The attribute accepts an optional literal for the target struct name, an optional `derive(...)` clause to add
-/// extra derives on the generated struct, and an optional `omit(...)` clause to list field names to omit.
+/// # Examples
 ///
-/// # Example
+/// With explicit target name and extra derives:
 ///
 /// ```ignore
 /// #[derive(Partial)]
@@ -97,7 +131,7 @@ impl Parse for PartialArgs {
 ///     secret: String,
 /// }
 ///
-/// // The macro generates:
+/// // Generated code:
 /// // #[derive(Debug, Clone)]
 /// // pub struct UserConstructor {
 /// //     pub name: String,
@@ -109,12 +143,25 @@ impl Parse for PartialArgs {
 /// //     }
 /// // }
 /// ```
+///
+/// With default target name:
+///
+/// ```ignore
+/// #[derive(Partial)]
+/// #[partial(derive(Debug), omit(x))]
+/// pub struct Car {
+///     x: u32,
+///     y: String,
+/// }
+///
+/// // Generated struct name defaults to "PartialCar".
+/// // The conversion method is named "to_car()".
+/// ```
 #[proc_macro_derive(Partial, attributes(omit, partial))]
 pub fn derive_partial(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let orig_name = ast.ident;
 
-    // Parse the attribute arguments from #[partial(...)]
     let partial_args = ast
         .attrs
         .iter()
@@ -126,21 +173,18 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
             omit_fields: Vec::new(),
         });
 
-    // Determine target struct name.
     let target_name = partial_args
         .target_name
         .map(|lit| lit.value())
         .unwrap_or_else(|| format!("Partial{}", orig_name));
     let target_ident = Ident::new(&target_name, orig_name.span());
 
-    // Convert omit fields to strings.
     let omit_names: Vec<String> = partial_args
         .omit_fields
         .iter()
         .map(|id| id.to_string())
         .collect();
 
-    // Ensure the input is a struct with named fields.
     let fields = if let Data::Struct(data) = ast.data {
         if let Fields::Named(named) = data.fields {
             named.named
@@ -158,7 +202,6 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
             .into();
     };
 
-    // Separate fields into those included and omitted.
     let mut included_fields = Vec::new();
     let mut omitted_fields = Vec::new();
     for field in fields {
@@ -171,7 +214,6 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
         }
     }
 
-    // Generate tokens for the fields in the partial struct.
     let included_fields_tokens = included_fields.iter().map(|field| {
         let ident = &field.ident;
         let ty = &field.ty;
@@ -180,14 +222,12 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
         }
     });
 
-    // Generate parameters for omitted fields in to_user method.
     let to_user_params = omitted_fields.iter().map(|field| {
         let ident = &field.ident;
         let ty = &field.ty;
         quote! { #ident: #ty }
     });
 
-    // Generate assignments for rebuilding the original struct.
     let assign_included = included_fields.iter().map(|field| {
         let ident = &field.ident;
         quote! { #ident: self.#ident }
@@ -200,13 +240,16 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
         #(#assign_included,)* #(#assign_omitted,)*
     };
 
-    // Generate derive attribute for the partial struct if any extra derives are specified.
     let derive_traits = partial_args.derive_traits;
     let derives = if !derive_traits.is_empty() {
         quote! { #[derive( #(#derive_traits),* )] }
     } else {
         quote! {}
     };
+
+    // Generate conversion method name as "to_<original_struct>" in snake_case.
+    let method_name = format!("to_{}", orig_name.to_string().to_snake_case());
+    let method_ident = Ident::new(&method_name, orig_name.span());
 
     let expanded = quote! {
         #derives
@@ -215,7 +258,7 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
         }
 
         impl #target_ident {
-            pub fn to_user(self, #( #to_user_params ),* ) -> #orig_name {
+            pub fn #method_ident(self, #( #to_user_params ),* ) -> #orig_name {
                 #orig_name {
                     #assign_all
                 }
