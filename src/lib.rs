@@ -272,7 +272,7 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
         };
 
         // Conversion method name is "to_<target_struct>" in snake_case.
-        let method_name = format!("to_{}", target_ident.to_string().to_snake_case());
+        let method_name = format!("to_{}", orig_name.to_string().to_snake_case());
         let method_ident = Ident::new(&method_name, orig_name.span());
 
         // Project the included fields from the full struct.
