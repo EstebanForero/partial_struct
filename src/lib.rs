@@ -3,13 +3,14 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
     parse::{Parse, ParseStream},
-    parse_macro_input, Data, DeriveInput, Fields, Ident, LitStr, Token,
+    parse_macro_input,
+    spanned::Spanned,
+    Data, DeriveInput, Fields, Ident, LitStr, Token,
 };
 
 /// Represents the arguments for the `#[partial(...)]` attribute.
 ///
 /// This attribute supports three optional parts (order does not matter):
-///
 /// - An optional target name literal, e.g. `"UserConstructor"`. If omitted, the generated
 ///   struct will be named `"Partial<OriginalStructName>"`.
 /// - An optional `derive(...)` clause listing trait identifiers to derive on the generated struct.
@@ -17,7 +18,7 @@ use syn::{
 ///
 /// # Examples
 ///
-/// Basic usage with omitted fields and extra derives:
+/// Basic usage with explicit target name, extra derives, and omitted fields:
 ///
 /// ```ignore
 /// #[derive(Partial)]
@@ -27,32 +28,19 @@ use syn::{
 ///     name: String,
 ///     secret: String,
 /// }
-///
-/// // Generated code:
-/// // #[derive(Debug, Clone)]
-/// // pub struct UserConstructor {
-/// //     pub name: String,
-/// // }
-/// //
-/// // impl UserConstructor {
-/// //     pub fn to_user(self, id: uuid::Uuid, secret: String) -> User {
-/// //         User { name: self.name, id, secret }
-/// //     }
-/// // }
 /// ```
 ///
-/// If the target name is omitted, the generated struct name defaults to "Partial<OriginalName>",
-/// and the conversion method will be named `to_<original_struct_snake_case>()`.
+/// If the target name is omitted, the generated struct defaults to "Partial<OriginalStructName>"
+/// and the conversion method is named `to_<original_struct>()` in snake case.
 ///
 /// ```ignore
 /// #[derive(Partial)]
-/// #[partial(omit(a))]
+/// #[partial(derive(Debug), omit(x))]
 /// pub struct Car {
-///     a: u32,
-///     b: String,
+///     x: u32,
+///     model: String,
 /// }
-///
-/// // Generated struct will be named `PartialCar` and have a method `to_car()`.
+/// // Generated struct is `PartialCar` with a method `to_car()`.
 /// ```
 struct PartialArgs {
     target_name: Option<LitStr>,
@@ -98,7 +86,6 @@ impl Parse for PartialArgs {
                 return Err(input
                     .error("Expected literal or identifier (derive, omit) in partial attribute"));
             }
-
             if input.peek(Token![,]) {
                 let _comma: Token![,] = input.parse()?;
             }
@@ -115,12 +102,16 @@ impl Parse for PartialArgs {
 ///
 /// The macro generates a new struct (with a name specified via the `#[partial(...)]` attribute or defaulting
 /// to `"Partial<OriginalStructName>"`) that contains all fields from the original struct except those listed
-/// in the `omit(...)` clause. It also implements a conversion method named `to_<original_struct>()`
-/// (in snake case) that takes the omitted fields as parameters and reconstructs the original struct.
+/// in the `omit(...)` clause. It also implements:
+///
+/// 1. A conversion method named `to_<original_struct>()` (in snake case) on the generated partial struct that
+///    takes the omitted fields as parameters and reconstructs the original struct.
+/// 2. An implementation of `From<OriginalStruct>` for the generated partial struct, so you can convert a full struct
+///    into the partial struct via the `into()` method.
 ///
 /// # Examples
 ///
-/// With explicit target name and extra derives:
+/// With explicit target name, extra derives, and omitted fields:
 ///
 /// ```ignore
 /// #[derive(Partial)]
@@ -142,6 +133,12 @@ impl Parse for PartialArgs {
 /// //         User { name: self.name, id, secret }
 /// //     }
 /// // }
+/// //
+/// // impl From<User> for UserConstructor {
+/// //     fn from(full: User) -> Self {
+/// //         Self { name: full.name }
+/// //     }
+/// // }
 /// ```
 ///
 /// With default target name:
@@ -151,11 +148,12 @@ impl Parse for PartialArgs {
 /// #[partial(derive(Debug), omit(x))]
 /// pub struct Car {
 ///     x: u32,
-///     y: String,
+///     model: String,
 /// }
 ///
 /// // Generated struct name defaults to "PartialCar".
-/// // The conversion method is named "to_car()".
+/// // The conversion method is named "to_car()", and
+/// // impl From<Car> for PartialCar is provided.
 /// ```
 #[proc_macro_derive(Partial, attributes(omit, partial))]
 pub fn derive_partial(input: TokenStream) -> TokenStream {
@@ -251,6 +249,12 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
     let method_name = format!("to_{}", orig_name.to_string().to_snake_case());
     let method_ident = Ident::new(&method_name, orig_name.span());
 
+    // Generate conversion projection for the full struct into the partial struct.
+    let project_included = included_fields.iter().map(|field| {
+        let ident = &field.ident;
+        quote! { #ident: full.#ident }
+    });
+
     let expanded = quote! {
         #derives
         pub struct #target_ident {
@@ -261,6 +265,14 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
             pub fn #method_ident(self, #( #to_user_params ),* ) -> #orig_name {
                 #orig_name {
                     #assign_all
+                }
+            }
+        }
+
+        impl From<#orig_name> for #target_ident {
+            fn from(full: #orig_name) -> Self {
+                Self {
+                    #(#project_included,)*
                 }
             }
         }
