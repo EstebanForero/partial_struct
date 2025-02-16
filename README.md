@@ -47,7 +47,8 @@ Examples
 
 Example 1: Explicit Target Name, Extra Derives, and Omitted Fields
 
-  #[derive(Partial)]
+```
+#[derive(Partial)]
   #[partial("UserConstructor", derive(Debug, Clone), omit(id, secret))]
   pub struct User {
       id: uuid::Uuid,
@@ -73,26 +74,34 @@ This generates:
           Self { name: full.name }
       }
   }
+```
+  
   
 Example 2: Default Target Name
 
-  #[derive(Partial)]
+```
+#[derive(Partial)]
   #[partial(derive(Debug), omit(x))]
   pub struct Car {
       x: u32,
       model: String,
   }
+```
+  
   
 Since no target name is provided, the generated struct is named "PartialCar" and the conversion method is
 named "to_partial_car()". Also, an implementation of From<Car> for PartialCar is provided.
 
 Example 3: Multiple Partial Attributes
 
-  #[derive(Partial)]
+```
+#[derive(Partial)]
   #[partial("UserInfo", derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq), omit(password))]
   #[partial("UserCreation", derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq), omit(id_user, password, registration_date, email_verified, user_rol))]
   pub struct User { ... }
-  
+
+```
+    
 This will generate two partial versions (UserInfo and UserCreation), each with its own conversion method.
 
 How It Works

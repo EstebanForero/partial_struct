@@ -1,7 +1,8 @@
 [package]
 name = "partial_struct"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2021"
+repository = "https://github.com/EstebanForero/partial_struct"
 authors = ["Esteban <estebanmff@outlook.com>"]
 license = "MIT OR Apache-2.0"
 description = "A proc-macro crate that generates partial versions of Rust structs. Specify omitted fields and custom derives via attributes, then use the generated conversion method to build the full struct."
