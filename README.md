@@ -20,7 +20,7 @@ Features
 
 • Bidirectional Conversion:
   The macro implements two conversions:
-    - A method on the generated partial struct (named to_<partial_struct>() in snake case) that takes
+    - A method on the generated partial struct (named to_<base_struct>() in snake case) that takes
       the omitted fields as parameters and reconstructs the full struct.
     - An implementation of From<FullStruct> for the generated partial struct, so you can convert the full struct
       into its partial representation via .into().
@@ -64,7 +64,7 @@ This generates:
   }
   
   impl UserConstructor {
-      pub fn to_user_constructor(self, id: uuid::Uuid, secret: String) -> User {
+      pub fn to_user(self, id: uuid::Uuid, secret: String) -> User {
           User { name: self.name, id, secret }
       }
   }
@@ -90,7 +90,7 @@ Example 2: Default Target Name
   
   
 Since no target name is provided, the generated struct is named "PartialCar" and the conversion method is
-named "to_partial_car()". Also, an implementation of From<Car> for PartialCar is provided.
+named "to_car()". Also, an implementation of From<Car> for PartialCar is provided.
 
 Example 3: Multiple Partial Attributes
 
