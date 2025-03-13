@@ -10,16 +10,18 @@ use syn::{
 
 /// Represents the arguments for the `#[partial(...)]` attribute.
 ///
-/// The attribute supports three optional parts (order does not matter):
+/// The attribute supports three optional components, which can appear in any order:
 ///
-/// - An optional target name literal, e.g. `"UserConstructor"`. If omitted, the generated
-///   struct will be named `"Partial<OriginalStructName>"`.
-/// - An optional `derive(...)` clause listing trait identifiers to derive on the generated struct.
-/// - An optional `omit(...)` clause listing the names of fields to omit from the generated struct.
+/// - **Target Name**: A string literal (e.g., `"UserConstructor"`) specifying the name of the generated partial struct.
+///   If omitted, defaults to `"Partial<OriginalStructName>"`.
+/// - **derive(...)**: A parenthesized list of trait identifiers (e.g., `Debug, Clone`) to derive for the partial struct.
+/// - **omit(...)**: A parenthesized list of field names to exclude from the partial struct.
+///
+/// Multiple `#[partial(...)]` attributes can be applied to a single struct to generate multiple partial versions.
 ///
 /// # Examples
 ///
-/// Explicit target name with extra derives and omitted fields:
+/// Explicit target name with derives and omitted fields:
 ///
 /// ```ignore
 /// #[derive(Partial)]
@@ -31,7 +33,7 @@ use syn::{
 /// }
 /// ```
 ///
-/// Using default target name:
+/// Default target name with minimal configuration:
 ///
 /// ```ignore
 /// #[derive(Partial)]
@@ -40,18 +42,33 @@ use syn::{
 ///     x: u32,
 ///     model: String,
 /// }
-/// // Generated struct will be named "PartialCar", and the conversion method will be "to_partial_car()"
+/// // Generates `PartialCar` with method `to_car()`.
 /// ```
 ///
-/// You can also attach more than one partial attribute to a single struct:
+/// Multiple partial structs:
 ///
 /// ```ignore
 /// #[derive(Partial)]
-/// #[partial("UserInfo", derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq), omit(password))]
-/// #[partial("UserCreation", derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq), omit(id_user, password, registration_date, email_verified, user_rol))]
-/// pub struct User { … }
+/// #[partial("UserInfo", derive(Debug, Default), omit(password))]
+/// #[partial("UserCreation", derive(Debug), omit(id, password))]
+/// pub struct User {
+///     id: i32,
+///     name: String,
+///     password: String,
+/// }
 /// ```
-/// This will generate two partial versions, one named `UserInfo` and the other `UserCreation`.
+///
+/// No arguments (default partial struct):
+///
+/// ```ignore
+/// #[derive(Partial)]
+/// #[partial]
+/// pub struct Point {
+///     x: i32,
+///     y: i32,
+/// }
+/// // Generates `PartialPoint` with all fields and method `to_point()`.
+/// ```
 struct PartialArgs {
     target_name: Option<LitStr>,
     derive_traits: Vec<Ident>,
@@ -108,20 +125,20 @@ impl Parse for PartialArgs {
     }
 }
 
-/// Derives a partial version of the annotated struct.
+/// Derives one or more partial versions of the annotated struct.
 ///
-/// This macro generates a new struct for each `#[partial(...)]` attribute on the base struct. Each generated partial
-/// struct contains all fields from the original struct except those listed in the `omit(...)` clause. In addition,
-/// the macro implements:
+/// For each `#[partial(...)]` attribute, this macro generates:
 ///
-/// 1. A conversion method on the generated partial struct, named `to_<target_struct>()` (using snake_case), which
-///    takes values for the omitted fields and reconstructs the full struct.
-/// 2. An implementation of `From<FullStruct>` for the generated partial struct, enabling conversion from the full
-///    struct to its partial representation via `.into()`.
+/// - A new struct containing all fields from the original struct except those listed in `omit(...)`.
+/// - A method `to_<original_struct>(self, ...omitted_fields)` that consumes the partial struct and reconstructs the full struct.
+/// - A method `to_<original_struct>_cloned(&self, ...omitted_fields)` that creates a new full struct by cloning the partial struct's fields.
+/// - An implementation of `From<OriginalStruct>` for the partial struct, projecting included fields.
+///
+/// If no `#[partial(...)]` attribute is provided, a default partial struct named `Partial<OriginalStruct>` is generated with all fields.
 ///
 /// # Examples
 ///
-/// With explicit target name, extra derives, and omitted fields:
+/// With explicit configuration:
 ///
 /// ```ignore
 /// #[derive(Partial)]
@@ -132,60 +149,43 @@ impl Parse for PartialArgs {
 ///     secret: String,
 /// }
 ///
-/// // Generated code:
+/// // Generated code (simplified):
 /// // #[derive(Debug, Clone)]
 /// // pub struct UserConstructor {
 /// //     pub name: String,
 /// // }
 /// //
 /// // impl UserConstructor {
-/// //     pub fn to_user_constructor(self, id: uuid::Uuid, secret: String) -> User {
-/// //         User { name: self.name, id, secret }
-/// //     }
+/// //     pub fn to_user(self, id: uuid::Uuid, secret: String) -> User { ... }
+/// //     pub fn to_user_cloned(&self, id: uuid::Uuid, secret: String) -> User
+/// //     where String: Clone { ... }
 /// // }
 /// //
-/// // impl From<User> for UserConstructor {
-/// //     fn from(full: User) -> Self {
-/// //         Self { name: full.name }
-/// //     }
-/// // }
+/// // impl From<User> for UserConstructor { ... }
 /// ```
 ///
-/// With default target name:
+/// Default partial struct:
 ///
 /// ```ignore
 /// #[derive(Partial)]
-/// #[partial(derive(Debug), omit(x))]
-/// pub struct Car {
-///     x: u32,
-///     model: String,
+/// pub struct Point {
+///     x: i32,
+///     y: i32,
 /// }
-///
-/// // Generated struct name defaults to "PartialCar" and the conversion method is named "to_partial_car()".
-/// // impl From<Car> for PartialCar { ... } is also provided.
-/// ```
-///
-/// Multiple partial attributes can be applied to a single struct:
-///
-/// ```ignore
-/// #[derive(Partial)]
-/// #[partial("UserInfo", derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq), omit(password))]
-/// #[partial("UserCreation", derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq), omit(id_user, password, registration_date, email_verified, user_rol))]
-/// pub struct User { ... }
+/// // Generates `PartialPoint` with `to_point()` and `to_point_cloned()`.
 /// ```
 #[proc_macro_derive(Partial, attributes(omit, partial))]
 pub fn derive_partial(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let orig_name = ast.ident;
 
-    // Collect all #[partial(...)] attributes.
+    // Collect all #[partial(...)] attributes, defaulting to one if none are provided.
     let mut partial_args_list: Vec<PartialArgs> = ast
         .attrs
         .iter()
         .filter(|attr| attr.path().is_ident("partial"))
         .filter_map(|attr| attr.parse_args::<PartialArgs>().ok())
         .collect();
-    // If none provided, generate one default PartialArgs.
     if partial_args_list.is_empty() {
         partial_args_list.push(PartialArgs {
             target_name: None,
@@ -194,7 +194,7 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
         });
     }
 
-    // Ensure the base struct has named fields.
+    // Ensure the input is a struct with named fields.
     let fields = if let Data::Struct(data) = ast.data {
         if let Fields::Named(named) = data.fields {
             named.named
@@ -212,7 +212,7 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
             .into();
     };
 
-    // For each partial attribute, generate code.
+    // Generate code for each partial struct.
     let partial_structs = partial_args_list.into_iter().map(|partial_args| {
         let target_name = partial_args
             .target_name
@@ -241,28 +241,34 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
         let included_fields_tokens = included_fields.iter().map(|field| {
             let ident = &field.ident;
             let ty = &field.ty;
-            quote! {
-                pub #ident: #ty
-            }
+            quote! { pub #ident: #ty }
         });
 
-        let to_partial_params = omitted_fields.iter().map(|field| {
+        let to_partial_params: Vec<_> = omitted_fields.iter().map(|field| {
             let ident = &field.ident;
             let ty = &field.ty;
             quote! { #ident: #ty }
-        });
+        }).collect();
 
-        let assign_included = included_fields.iter().map(|field| {
+        let assign_included: Vec<_> = included_fields.iter().map(|field| {
             let ident = &field.ident;
             quote! { #ident: self.#ident }
-        });
-        let assign_omitted = omitted_fields.iter().map(|field| {
+        }).collect();
+
+        let assign_omitted: Vec<_> = omitted_fields.iter().map(|field| {
             let ident = &field.ident;
             quote! { #ident: #ident }
+        }).collect();
+
+        let assign_all = quote! { #(#assign_included,)* #(#assign_omitted,)* };
+
+        let cloned_assign_included = included_fields.iter().map(|field| {
+            let ident = &field.ident;
+            quote! { #ident: self.#ident.clone() }
         });
-        let assign_all = quote! {
-            #(#assign_included,)* #(#assign_omitted,)*
-        };
+        let cloned_assign_all = quote! { #(#cloned_assign_included,)* #(#assign_omitted,)* };
+
+        let included_field_types = included_fields.iter().map(|f| &f.ty);
 
         let derive_traits = partial_args.derive_traits;
         let derives = if !derive_traits.is_empty() {
@@ -271,30 +277,62 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
             quote! {}
         };
 
-        // Conversion method name is "to_<target_struct>" in snake_case.
         let method_name = format!("to_{}", orig_name.to_string().to_snake_case());
         let method_ident = Ident::new(&method_name, orig_name.span());
+        let cloned_method_name = format!("{}_cloned", method_name);
+        let cloned_method_ident = Ident::new(&cloned_method_name, orig_name.span());
 
-        // Project the included fields from the full struct.
+        let omitted_field_names: Vec<String> = omitted_fields
+            .iter()
+            .map(|f| f.ident.as_ref().unwrap().to_string())
+            .collect();
+        let omitted_fields_str = if omitted_field_names.is_empty() {
+            "including all fields".to_string()
+        } else {
+            format!("omitting the fields: {}", omitted_field_names.join(", "))
+        };
+        let struct_doc = format!("A partial version of `{}` {}", orig_name, omitted_fields_str);
+
+        let consuming_method_doc =
+            "Converts this partial struct into the full struct by providing the omitted fields.";
+        let cloned_method_doc1 = "Creates a new full struct by cloning the fields from this partial struct and providing the omitted fields.";
+        let cloned_method_doc2 = "Requires that all included fields implement `Clone`.";
+        let from_impl_doc =
+            "Converts the full struct into this partial struct by projecting the included fields.";
+
         let project_included = included_fields.iter().map(|field| {
             let ident = &field.ident;
             quote! { #ident: full.#ident }
         });
 
         quote! {
+            #[doc = #struct_doc]
             #derives
             pub struct #target_ident {
                 #(#included_fields_tokens,)*
             }
 
             impl #target_ident {
+                #[doc = #consuming_method_doc]
                 pub fn #method_ident(self, #( #to_partial_params ),* ) -> #orig_name {
                     #orig_name {
                         #assign_all
                     }
                 }
+
+                #[doc = #cloned_method_doc1]
+                #[doc = #cloned_method_doc2]
+                pub fn #cloned_method_ident(&self, #( #to_partial_params ),* ) -> #orig_name
+                where
+                    #( #included_field_types: Clone, )*
+                {
+                    #orig_name {
+                        #cloned_assign_all
+                    }
+                }
             }
 
+            #[doc = #from_impl_doc]
             impl From<#orig_name> for #target_ident {
                 fn from(full: #orig_name) -> Self {
                     Self {
