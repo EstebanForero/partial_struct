@@ -22,6 +22,7 @@ struct PartialArgs {
     target_name: Option<LitStr>,
     derive_traits: Vec<Ident>,
     omit_fields: Vec<Ident>,
+    optional_fields: Vec<Ident>,
 }
 
 impl Parse for PartialArgs {
@@ -29,6 +30,7 @@ impl Parse for PartialArgs {
         let mut target_name = None;
         let mut derive_traits = Vec::new();
         let mut omit_fields = Vec::new();
+        let mut optional_fields = Vec::new();
 
         while !input.is_empty() {
             let lookahead = input.lookahead1();
@@ -53,8 +55,14 @@ impl Parse for PartialArgs {
                             .parse_terminated(Ident::parse, Token![,])?
                             .into_iter(),
                     );
+                } else if key == "optional" {
+                    optional_fields.extend(
+                        content
+                            .parse_terminated(Ident::parse, Token![,])?
+                            .into_iter(),
+                    );
                 } else {
-                    return Err(syn::Error::new(key.span(), "Expected 'derive' or 'omit'"));
+                    return Err(syn::Error::new(key.span(), "Expected 'derive', 'omit', or 'optional'"));
                 }
             } else {
                 return Err(lookahead.error());
@@ -68,6 +76,7 @@ impl Parse for PartialArgs {
             target_name,
             derive_traits,
             omit_fields,
+            optional_fields,
         })
     }
 }
@@ -121,6 +130,7 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
             target_name: None,
             derive_traits: Vec::new(),
             omit_fields: Vec::new(),
+            optional_fields: Vec::new(),
         });
     } else if partial_args_list.is_empty()
         && ast.attrs.iter().any(|attr| attr.path().is_ident("partial"))
@@ -187,17 +197,39 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
             .map(|id| id.to_string())
             .collect();
 
+        let optional_names: std::collections::HashSet<String> = partial_args
+            .optional_fields
+            .iter()
+            .map(|id| id.to_string())
+            .collect();
+
         let mut included_fields = Vec::new();
         let mut omitted_fields = Vec::new();
+        let mut optional_fields = Vec::new();
         for field in fields.iter() {
             if let Some(ref field_ident) = field.ident {
                 if omit_names.contains(&field_ident.to_string()) {
                     omitted_fields.push(field);
+                } else if optional_names.contains(&field_ident.to_string()) {
+                    optional_fields.push(field);
                 } else {
                     included_fields.push(field);
                 }
             }
         }
+
+        // --- make sure that omit and optional fields are mutually exclusive ---
+        let conflict_fields: Vec<_> = omit_names.intersection(&optional_names).collect();
+        if !conflict_fields.is_empty() {
+            return syn::Error::new_spanned(
+                &ast.ident,
+                format!("Field(s) cannot be both omitted and optional: {}", 
+                        conflict_fields.into_iter().cloned().collect::<Vec<_>>().join(", "))
+            )
+            .to_compile_error()
+            .into();
+        }
+        // ---
 
         // --- Field attribute copying remains the same ---
         let included_fields_tokens = included_fields.iter().map(|field| {
@@ -211,11 +243,29 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
         });
         // ---
 
+        // --- Optional fields are copied as Option<T> ---
+        let optional_fields_tokens = optional_fields.iter().map(|field| {
+            let ident = &field.ident;
+            let ty = &field.ty;
+            let attrs = &field.attrs;
+            quote! {
+                #(#attrs)*
+                pub #ident: Option<#ty>
+            }
+        });
+        // ---
+
         let to_method_params: Vec<_> = omitted_fields.iter().map(|field| {
             let ident = &field.ident;
             let ty = &field.ty;
             quote! { #ident: #ty }
-        }).collect();
+        }).chain(
+            optional_fields.iter().map(|field| {
+                let ident = &field.ident;
+                let ty = &field.ty;
+                quote! { #ident: Option<#ty> }
+            })
+        ).collect();
 
         // Field assignment logic remains the same
         let assign_included: Vec<_> = included_fields.iter().map(|field| {
@@ -234,6 +284,11 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
             if omit_names.contains(&ident.to_string()) {
                 // It's an omitted field, assign from parameter
                 Some(quote! { #ident: #ident })
+            } else if optional_names.contains(&ident.to_string()) {
+                // It's an optional field, try to assign it from self, and if it's None, assign from parameter
+                Some(quote! {
+                    #ident: self.#ident.clone().or(#ident).expect("Optional field must be provided")
+                })
             } else {
                 // It's an included field, assign from self
                 Some(quote! { #ident: self.#ident })
@@ -245,6 +300,11 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
              if omit_names.contains(&ident.to_string()) {
                 // It's an omitted field, assign from parameter (no clone needed)
                 Some(quote! { #ident: #ident })
+            } else if optional_names.contains(&ident.to_string()) {
+                // It's an optional field, assign from self.clone() or from parameter
+                Some(quote! {
+                    #ident: self.#ident.clone().or(#ident).expect("Optional field must be provided")
+                })
             } else {
                 // It's an included field, assign from self.clone()
                 Some(quote! { #ident: self.#ident.clone() })
@@ -287,13 +347,17 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
         let project_included = included_fields.iter().map(|field| {
             let ident = &field.ident;
             quote! { #ident: full.#ident }
-        });
+        }).chain(optional_fields.iter().map(|field| {
+            let ident = &field.ident;
+            quote! { #ident: Some(full.#ident) }
+        }));
 
         quote! {
             #[doc = #struct_doc]
             #derives
             pub struct #target_ident {
                 #(#included_fields_tokens,)*
+                #(#optional_fields_tokens,)*
             }
 
             impl #target_ident {
