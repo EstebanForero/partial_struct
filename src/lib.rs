@@ -3,13 +3,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
     parse::{Parse, ParseStream},
-    parse_macro_input,
-    Data,
-    DeriveInput,
-    Fields,
-    Ident,
-    LitStr,
-    Token,
+    parse_macro_input, Data, DeriveInput, Fields, Ident, LitStr, Token,
 };
 
 // --- PartialArgs struct and its Parse impl remain the same ---
@@ -60,7 +54,10 @@ impl Parse for PartialArgs {
                             .into_iter(),
                     );
                 } else {
-                    return Err(syn::Error::new(key.span(), "Expected 'derive', 'omit', or 'optional'"));
+                    return Err(syn::Error::new(
+                        key.span(),
+                        "Expected 'derive', 'omit', or 'optional'",
+                    ));
                 }
             } else {
                 return Err(lookahead.error());
