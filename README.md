@@ -18,6 +18,10 @@ Features
 • Custom Derives:
   Optionally add extra derives (e.g., Debug, Clone) to the generated partial struct using a derive(...) clause.
 
+• Optional Fields:
+  Mark fields as optional in the partial struct with optional(...). Optional fields become Option<T> in the partial,
+  and when rebuilding the full struct you can supply a fallback Option<T> if the partial holds None.
+
 • Bidirectional Conversion:
   The macro implements two conversions:
     - A method on the generated partial struct (named to_<base_struct>() in snake case) that takes
@@ -36,12 +40,13 @@ Add the following to your Cargo.toml:
 Usage
 -----
 Annotate your struct with #[derive(Partial)] and attach one or more #[partial(...)] attributes to configure the output.
-The attribute supports three optional parts (order does not matter):
+The attribute supports optional parts (order does not matter):
 
   - An optional target name literal (e.g. "UserConstructor"). If omitted, the generated struct is named
     "Partial<OriginalStructName>".
   - An optional derive(...) clause listing trait identifiers to derive on the generated struct.
   - An optional omit(...) clause listing the names of fields to omit from the generated struct.
+  - An optional optional(...) clause listing the names of fields to make Option<T> in the generated struct.
 
 Examples
 --------
@@ -115,6 +120,21 @@ named "to_car()". Also, an implementation of From<Car> for PartialCar is provide
 Example 3: Multiple Partial Attributes
 
 ```
+
+Example 4: Optional Fields
+
+```
+#[derive(Partial)]
+  #[partial(optional(email))]
+  pub struct User {
+      id: u32,
+      name: String,
+      email: String,
+  }
+```
+
+This generates a PartialUser with `email: Option<String>`. Converting from the full struct sets
+`email: Some(full.email)`, and rebuilding the full struct uses the provided fallback if the partial has `None`.
 #[derive(Partial)]
   #[partial("UserInfo", derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq), omit(password))]
   #[partial("UserCreation", derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq), omit(id_user, password, registration_date, email_verified, user_rol))]
