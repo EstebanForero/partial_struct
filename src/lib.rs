@@ -4,8 +4,6 @@ use quote::quote;
 use syn::{
     parse::{Parse, ParseStream},
     parse_macro_input,
-    spanned::Spanned,
-    Attribute, // Keep Attribute
     Data,
     DeriveInput,
     Fields,
@@ -268,16 +266,6 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
         ).collect();
 
         // Field assignment logic remains the same
-        let assign_included: Vec<_> = included_fields.iter().map(|field| {
-            let ident = &field.ident;
-            quote! { #ident: self.#ident }
-        }).collect();
-
-        let assign_omitted: Vec<_> = omitted_fields.iter().map(|field| {
-            let ident = &field.ident;
-            quote! { #ident: #ident }
-        }).collect();
-
         // Construct fields in the order they appear in the original struct
         let construction_assignments = fields.iter().filter_map(|field| {
             let ident = field.ident.as_ref()?; // Skip if somehow no ident (shouldn't happen for named)
@@ -343,6 +331,36 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
         let cloned_method_doc2 = "Requires that all included fields implement `Clone`.";
         let from_impl_doc =
             "Converts the full struct into this partial struct by projecting the included fields.";
+        let from_with_omitted_doc =
+            "Splits the full struct into this partial struct and a struct containing the omitted fields.";
+        let into_with_omitted_doc =
+            "Splits this struct into its partial representation and a struct containing the omitted fields.";
+
+        let omitted_ident = Ident::new(&format!("{}Omitted", target_ident), orig_name.span());
+        let omitted_struct_doc = format!(
+            "Fields omitted from `{}` when projecting into `{}`.",
+            orig_name, target_ident
+        );
+
+        let omitted_fields_tokens = omitted_fields.iter().map(|field| {
+            let ident = &field.ident;
+            let ty = &field.ty;
+            let attrs = &field.attrs;
+            quote! {
+                #(#attrs)*
+                pub #ident: #ty
+            }
+        });
+
+        let omitted_field_idents: Vec<_> = omitted_fields
+            .iter()
+            .filter_map(|field| field.ident.as_ref())
+            .collect();
+
+        let field_idents: Vec<_> = fields
+            .iter()
+            .filter_map(|field| field.ident.as_ref())
+            .collect();
 
         let project_included = included_fields.iter().map(|field| {
             let ident = &field.ident;
@@ -352,6 +370,44 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
             quote! { #ident: Some(full.#ident) }
         }));
 
+        let partial_from_full_assignments = included_fields
+            .iter()
+            .map(|field| {
+                let ident = &field.ident;
+                quote! { #ident: #ident }
+            })
+            .chain(optional_fields.iter().map(|field| {
+                let ident = &field.ident;
+                quote! { #ident: Some(#ident) }
+            }));
+
+        let (omitted_struct_tokens, omitted_struct_ty, omitted_struct_ctor) = if omitted_fields.is_empty() {
+            (quote! {}, quote! { () }, quote! { () })
+        } else {
+            (
+                quote! {
+                    #[doc = #omitted_struct_doc]
+                    pub struct #omitted_ident {
+                        #(#omitted_fields_tokens,)*
+                    }
+                },
+                quote! { #omitted_ident },
+                quote! { #omitted_ident { #(#omitted_field_idents,)* } },
+            )
+        };
+
+        let from_with_omitted_method_name = format!(
+            "from_{}_with_omitted",
+            orig_name.to_string().to_snake_case()
+        );
+        let from_with_omitted_ident = Ident::new(&from_with_omitted_method_name, orig_name.span());
+
+        let into_with_omitted_method_name = format!(
+            "into_{}_with_omitted",
+            target_ident.to_string().to_snake_case()
+        );
+        let into_with_omitted_ident = Ident::new(&into_with_omitted_method_name, orig_name.span());
+
         quote! {
             #[doc = #struct_doc]
             #derives
@@ -359,6 +415,8 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
                 #(#included_fields_tokens,)*
                 #(#optional_fields_tokens,)*
             }
+
+            #omitted_struct_tokens
 
             impl #target_ident {
                 #[doc = #consuming_method_doc]
@@ -380,6 +438,18 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
                         #( #cloned_construction_assignments, )* // Use ordered cloned assignments
                     }
                 }
+
+                #[doc = #from_with_omitted_doc]
+                #[inline]
+                pub fn #from_with_omitted_ident(full: #orig_name) -> (Self, #omitted_struct_ty) {
+                    let #orig_name { #(#field_idents,)* } = full;
+                    (
+                        Self {
+                            #(#partial_from_full_assignments,)*
+                        },
+                        #omitted_struct_ctor,
+                    )
+                }
             }
 
             #[doc = #from_impl_doc]
@@ -389,6 +459,14 @@ pub fn derive_partial(input: TokenStream) -> TokenStream {
                     Self {
                         #(#project_included,)*
                     }
+                }
+            }
+
+            impl #orig_name {
+                #[doc = #into_with_omitted_doc]
+                #[inline]
+                pub fn #into_with_omitted_ident(self) -> (#target_ident, #omitted_struct_ty) {
+                    #target_ident::#from_with_omitted_ident(self)
                 }
             }
         }

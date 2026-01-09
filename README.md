@@ -24,6 +24,7 @@ Features
       the omitted fields as parameters and reconstructs the full struct.
     - An implementation of From<FullStruct> for the generated partial struct, so you can convert the full struct
       into its partial representation via .into().
+    - A split method that returns both the partial struct and a struct containing the omitted fields.
 
 Installation
 ------------
@@ -63,15 +64,34 @@ This generates:
       pub name: String,
   }
   
+  pub struct UserConstructorOmitted {
+      pub id: uuid::Uuid,
+      pub secret: String,
+  }
+
   impl UserConstructor {
       pub fn to_user(self, id: uuid::Uuid, secret: String) -> User {
           User { name: self.name, id, secret }
+      }
+
+      pub fn from_user_with_omitted(full: User) -> (Self, UserConstructorOmitted) {
+          let User { id, name, secret } = full;
+          (
+              Self { name },
+              UserConstructorOmitted { id, secret },
+          )
       }
   }
   
   impl From<User> for UserConstructor {
       fn from(full: User) -> Self {
           Self { name: full.name }
+      }
+  }
+
+  impl User {
+      pub fn into_user_constructor_with_omitted(self) -> (UserConstructor, UserConstructorOmitted) {
+          UserConstructor::from_user_with_omitted(self)
       }
   }
 ```
@@ -112,6 +132,8 @@ When you derive Partial on a struct, the macro:
   3. Implements a conversion method on the generated partial struct that takes the omitted fields as parameters and
      reconstructs the full struct.
   4. Implements From<FullStruct> for the generated partial struct, allowing conversion from the full struct via .into().
+  5. Implements a split method on the partial struct to return (partial, omitted), and a convenience method on the
+     full struct that forwards to it.
 
 Minimizing Build Overhead
 -------------------------
@@ -132,4 +154,3 @@ for more information.
 Author
 ------
 Esteban <estebanmff@outlook.com>
-
